@@ -56,6 +56,18 @@ useEffect(() => {
   latestStateRef.current = state;
 }, [state]);
 
+  // Auto-lock on visibility change (minimize, tab switch, etc.)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        updateState(s => ({ ...s, isLocked: true }));
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => window.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [updateState]);
+
   const [historyRange, setHistoryRange] = useState<'all' | 'last12m' | 'fiscal' | 'custom'>('all');
   // Custom range: default to first of current month → today
   const [historyCustomDates, setHistoryCustomDates] = useState(() => {

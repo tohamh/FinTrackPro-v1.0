@@ -36,7 +36,7 @@ export function useAppState() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        return { ...initialData, ...parsed };
+        return { ...initialData, ...parsed, isLocked: true };
       }
     } catch (e) {
       console.error('Failed to load state from localStorage', e);

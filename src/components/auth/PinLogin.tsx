@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Lock, Delete, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,7 +17,8 @@ export const PinLogin: React.FC<PinLoginProps> = ({ onSuccess, correctPin, setPi
   const [input, setInput] = useState('');
   const [error, setError] = useState(false);
 
-  const handleNumber = (num: string) => {
+  const handleNumber = useCallback((num: string) => {
+    if (error) return;
     if (input.length < 4) {
       const newInput = input + num;
       setInput(newInput);
@@ -38,11 +39,25 @@ export const PinLogin: React.FC<PinLoginProps> = ({ onSuccess, correctPin, setPi
         }
       }
     }
-  };
+  }, [input, error, correctPin, setPin, onSuccess]);
 
-  const handleDelete = () => {
-    setInput(input.slice(0, -1));
-  };
+  const handleDelete = useCallback(() => {
+    if (error) return;
+    setInput(prev => prev.slice(0, -1));
+  }, [error]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        handleNumber(e.key);
+      } else if (e.key === 'Backspace') {
+        handleDelete();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNumber, handleDelete]);
 
   return (
     <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-6">
