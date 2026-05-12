@@ -56,17 +56,31 @@ useEffect(() => {
   latestStateRef.current = state;
 }, [state]);
 
-  // Auto-lock on visibility change (minimize, tab switch, etc.)
+  // Inactivity timer (3 minutes)
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
+    if (state.isLocked) return;
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
         updateState(s => ({ ...s, isLocked: true }));
-      }
+      }, 3 * 60 * 1000); // 3 minutes
     };
 
-    window.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => window.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [updateState]);
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    const handleInactivity = () => resetTimer();
+
+    events.forEach(name => window.addEventListener(name, handleInactivity));
+    
+    resetTimer(); // Initialize timer
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(name => window.removeEventListener(name, handleInactivity));
+    };
+  }, [state.isLocked, updateState]);
 
   const [historyRange, setHistoryRange] = useState<'all' | 'last12m' | 'fiscal' | 'custom'>('all');
   // Custom range: default to first of current month → today
