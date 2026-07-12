@@ -234,7 +234,7 @@ interface TransactionModalProps {
   isOpen: boolean;
   editingTransaction: DseTransaction | null;
   onClose: () => void;
-  onSave: (t: DseTransaction, keepOpen?: boolean) => Promise<void>;
+  onSave: (t: DseTransaction, keepOpen?: boolean, splitTx?: DseTransaction) => Promise<void>;
 }
 
 interface DseSettings {
@@ -263,12 +263,39 @@ const TransactionModal: React.FC<TransactionModalProps & {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [error, setError] = useState<string>('');
 
+  const [isSplitActive, setIsSplitActive] = useState(false);
+  const [splitQtys, setSplitQtys] = useState<{ Investment: number; Trading: number }>({ Investment: 0, Trading: 0 });
+  const [originalQty, setOriginalQty] = useState<number>(0);
+  const [originalPortfolio, setOriginalPortfolio] = useState<'Investment' | 'Trading'>('Investment');
+  const [originalCommission, setOriginalCommission] = useState<number>(0);
+  const [originalTotal, setOriginalTotal] = useState<number>(0);
+
   useEffect(() => {
     if (isOpen) {
       setFormData(editingTransaction ?? blankForm(getTodayStr()));
       setCommMode('Auto');
       setSuggestions([]);
       setError('');
+
+      setIsSplitActive(false);
+      if (editingTransaction) {
+        const qty = editingTransaction.qty || 0;
+        const portfolio = editingTransaction.portfolio || 'Investment';
+        setOriginalQty(qty);
+        setOriginalPortfolio(portfolio);
+        setOriginalCommission(editingTransaction.commission || 0);
+        setOriginalTotal(editingTransaction.total || 0);
+        setSplitQtys({
+          Investment: portfolio === 'Investment' ? qty : 0,
+          Trading: portfolio === 'Trading' ? qty : 0
+        });
+      } else {
+        setOriginalQty(0);
+        setOriginalPortfolio('Investment');
+        setOriginalCommission(0);
+        setOriginalTotal(0);
+        setSplitQtys({ Investment: 0, Trading: 0 });
+      }
     }
   }, [isOpen, editingTransaction]);
 
@@ -413,7 +440,44 @@ const handleNext = async () => {
 
         {/* Portfolio */}
         <div>
-          <label className={labelCls}>Portfolio</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11px] font-bold text-white uppercase block">Portfolio</label>
+            {editingTransaction && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSplitActive) {
+                    setIsSplitActive(false);
+                    setFormData(prev => ({
+                      ...prev,
+                      portfolio: originalPortfolio,
+                      qty: originalQty
+                    }));
+                  } else {
+                    setIsSplitActive(true);
+                    const currentQty = formData.qty || 0;
+                    const currentPortfolio = formData.portfolio || 'Investment';
+                    setOriginalQty(currentQty);
+                    setOriginalPortfolio(currentPortfolio);
+                    setOriginalCommission(formData.commission || 0);
+                    setOriginalTotal(formData.total || 0);
+                    setSplitQtys({
+                      Investment: currentPortfolio === 'Investment' ? currentQty : 0,
+                      Trading: currentPortfolio === 'Trading' ? currentQty : 0
+                    });
+                  }
+                }}
+                className={cn(
+                  "text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded transition-all",
+                  isSplitActive 
+                    ? "text-teal-400 bg-teal-500/10 border border-teal-500/20" 
+                    : "text-slate-500 hover:text-slate-300 border border-transparent"
+                )}
+              >
+                [SPLIT]
+              </button>
+            )}
+          </div>
           <div className="flex gap-2">
             {[
               { id: 'Investment' },
@@ -422,9 +486,18 @@ const handleNext = async () => {
               <button
                 key={p.id}
                 type="button"
-                onClick={() =>
-                  set({ portfolio: p.id as DseTransaction['portfolio'] })
-                }
+                onClick={() => {
+                  if (isSplitActive) {
+                    const targetPortfolio = p.id as 'Investment' | 'Trading';
+                    const targetQty = splitQtys[targetPortfolio];
+                    set({
+                      portfolio: targetPortfolio,
+                      qty: targetQty
+                    });
+                  } else {
+                    set({ portfolio: p.id as DseTransaction['portfolio'] });
+                  }
+                }}
                 className={cn(
   "flex-1 px-4 py-2 rounded-lg text-label font-bold uppercase transition-colors",
   formData.portfolio === p.id
@@ -437,6 +510,14 @@ const handleNext = async () => {
             ))}
           </div>
         </div>
+
+        {isSplitActive && (
+          <div className="bg-teal-400/5 border border-teal-400/20 rounded-lg p-2.5 flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+            <span>Investment: <strong className="text-white tabular-nums">{splitQtys.Investment}</strong></span>
+            <span>Trading: <strong className="text-white tabular-nums">{splitQtys.Trading}</strong></span>
+            <span>Total: <strong className="text-teal-400 tabular-nums">{originalQty}</strong></span>
+          </div>
+        )}
 
         {/* Ticker */}
         <div className="relative">
@@ -484,10 +565,22 @@ const handleNext = async () => {
               value={formData.qty || ''}
               placeholder="0"
               onChange={e => {
-                  const val = e.target.value === '' ? 0 : +e.target.value;
+                const val = e.target.value === '' ? 0 : +e.target.value;
+                if (isSplitActive) {
+                  const clamped = Math.min(Math.max(0, val), originalQty);
+                  const activePortfolio = formData.portfolio || 'Investment';
+                  const otherPortfolio = activePortfolio === 'Investment' ? 'Trading' : 'Investment';
+                  
+                  setSplitQtys(prev => ({
+                    ...prev,
+                    [activePortfolio]: clamped,
+                    [otherPortfolio]: originalQty - clamped
+                  }));
+                  set({ qty: clamped });
+                } else {
                   set({ qty: val });
                 }
-              }
+              }}
             />
           </div>
 
@@ -527,7 +620,11 @@ const handleNext = async () => {
 
             <input
               type="number"
-              value={formData.commission || 0}
+              value={
+                commMode === 'Auto'
+                  ? (formData.commission != null ? parseFloat(formData.commission.toFixed(8)) : 0)
+                  : (formData.commission || 0)
+              }
               onChange={e => set({ commission: +e.target.value })}
               readOnly={commMode === 'Auto'}
               className={cn(
@@ -549,7 +646,7 @@ const handleNext = async () => {
             <input
               type="number"
               readOnly
-              value={formData.total || 0}
+              value={formData.total != null ? parseFloat(formData.total.toFixed(8)) : 0}
               className="w-full h-10 bg-black border border-teal-400/30 rounded-lg px-3 text-[11px] font-bold text-teal-300"
             />
           </div>
@@ -568,11 +665,87 @@ const handleNext = async () => {
           <button
             type="button"
             onClick={async () => {
-              if ((formData.qty || 0) <= 0 || (formData.price || 0) <= 0) {
+              const checkQty = isSplitActive ? originalQty : (formData.qty || 0);
+              if (checkQty <= 0 || (formData.price || 0) <= 0) {
                  setError('Please enter a valid quantity and price');
                  return;
               }
-              await onSave(formData as DseTransaction);
+
+              if (isSplitActive && splitQtys.Investment > 0 && splitQtys.Trading > 0) {
+                const otherPortfolio = originalPortfolio === 'Investment' ? 'Trading' : 'Investment';
+                
+                // tx1 (original portfolio)
+                const tx1Qty = splitQtys[originalPortfolio];
+                let tx1Comm = 0;
+                let tx1Total = 0;
+                const price = formData.price || 0;
+                const subtotal1 = tx1Qty * price;
+                
+                if (commMode === 'Auto') {
+                  tx1Comm = (formData.type === 'Buy' || formData.type === 'Sell')
+                    ? subtotal1 * (commissionRate / 100)
+                    : 0;
+                  if (formData.type === 'Buy') tx1Total = subtotal1 + tx1Comm;
+                  else if (formData.type === 'Sell') tx1Total = subtotal1 - tx1Comm;
+                  else tx1Total = subtotal1;
+                } else {
+                  tx1Comm = (tx1Qty / originalQty) * originalCommission;
+                  tx1Total = (tx1Qty / originalQty) * originalTotal;
+                }
+                
+                const tx1: DseTransaction = {
+                  ...(formData as DseTransaction),
+                  portfolio: originalPortfolio,
+                  qty: tx1Qty,
+                  commission: tx1Comm,
+                  total: tx1Total
+                };
+
+                // tx2 (other portfolio)
+                const tx2Qty = splitQtys[otherPortfolio];
+                let tx2Comm = 0;
+                let tx2Total = 0;
+                const subtotal2 = tx2Qty * price;
+                
+                if (commMode === 'Auto') {
+                  tx2Comm = (formData.type === 'Buy' || formData.type === 'Sell')
+                    ? subtotal2 * (commissionRate / 100)
+                    : 0;
+                  if (formData.type === 'Buy') tx2Total = subtotal2 + tx2Comm;
+                  else if (formData.type === 'Sell') tx2Total = subtotal2 - tx2Comm;
+                  else tx2Total = subtotal2;
+                } else {
+                  tx2Comm = (tx2Qty / originalQty) * originalCommission;
+                  tx2Total = (tx2Qty / originalQty) * originalTotal;
+                }
+
+                const tx2: DseTransaction = {
+                  ...(formData as DseTransaction),
+                  id: Math.random().toString(36).substr(2, 9),
+                  portfolio: otherPortfolio,
+                  qty: tx2Qty,
+                  commission: tx2Comm,
+                  total: tx2Total
+                };
+
+                await onSave(tx1, false, tx2);
+                onClose();
+                return;
+              }
+
+              // Otherwise save single transaction
+              let saveFormData = { ...formData };
+              if (isSplitActive) {
+                if (splitQtys.Investment === originalQty) {
+                  saveFormData.portfolio = 'Investment';
+                  saveFormData.qty = originalQty;
+                } else if (splitQtys.Trading === originalQty) {
+                  saveFormData.portfolio = 'Trading';
+                  saveFormData.qty = originalQty;
+                }
+              }
+
+              await onSave(saveFormData as DseTransaction);
               onClose();
             }}
             className="flex-1 px-4 py-2 rounded-lg bg-teal-400 text-slate-950 text-label font-bold uppercase hover:bg-teal-300 transition-colors"
@@ -1533,7 +1706,7 @@ export const DseTrackerModule: React.FC<DseTrackerModuleProps & { activeTab?: Ds
   const [isPortfolioMenuOpen, setIsPortfolioMenuOpen] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [isTypeMenuOpen, setIsTypeMenuOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<'date' | 'total' | 'ticker' | 'type'>('date');
+  const [sortBy, setSortBy] = useState<'date' | 'total' | 'ticker' | 'type' | 'price'>('date');
 const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -1567,13 +1740,50 @@ const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const onAddStock = () => {
     if (!newTicker || !newCompany) return;
+    const ticker = newTicker.trim().toUpperCase();
+    const name = newCompany.trim();
+    if (!ticker || !name) return;
+
+    // Check if exists in transaction history
+    const existsInHistory = transactions.some(tx => tx.ticker && tx.ticker.toUpperCase() === ticker);
+    
+    if (existsInHistory) {
+      // Update company name in all transactions
+      const updatedTransactions = transactions.map(tx => {
+        if (tx.ticker && tx.ticker.toUpperCase() === ticker) {
+          return { ...tx, companyName: name };
+        }
+        return tx;
+      });
+      // Save locally
+      setTransactions(updatedTransactions);
+      localStorage.setItem('sheet_cache_dse', JSON.stringify(updatedTransactions));
+      markDirty('dse');
+      // Push to sheets
+      pushModuleData('dse', updatedTransactions);
+    }
+
+    // Add/Update in customStocks
+    const exists = dseSettings.customStocks.some(s => s.ticker === ticker);
+    let newCustom;
+    if (exists) {
+      newCustom = dseSettings.customStocks.map(s => s.ticker === ticker ? { ticker, name } : s);
+    } else {
+      newCustom = [...dseSettings.customStocks, { ticker, name }];
+    }
+
     const newSettings = { 
       ...dseSettings, 
-      customStocks: [...dseSettings.customStocks, { ticker: newTicker, name: newCompany }] 
+      customStocks: newCustom 
     };
     saveSettings(newSettings);
     setNewTicker('');
     setNewCompany('');
+    setApiStatus({ 
+      message: `Stock ${ticker} ${existsInHistory ? 'updated in database and transaction history' : (exists ? 'updated' : 'added')} successfully`, 
+      isError: false 
+    });
+    setTimeout(() => setApiStatus(null), 3000);
   };
 
   const saveSettings = async (newSettings: DseSettings) => {
@@ -1850,10 +2060,13 @@ const pushToSheets = useCallback(async (action: 'update' | 'delete', transaction
   }, [triggerAdd, setTriggerAdd]);
 
   // Save handler (called by both Add and Next)
-  const handleSaveTransaction = async (t: DseTransaction) => {
+  const handleSaveTransaction = async (t: DseTransaction, keepOpen?: boolean, splitTx?: DseTransaction) => {
     if (editingTransaction) {
       setTransactions(prev => {
-        const updated = prev.map(tx => tx.id === t.id ? t : tx);
+        let updated = prev.map(tx => tx.id === t.id ? t : tx);
+        if (splitTx) {
+          updated = [...updated, splitTx];
+        }
         localStorage.setItem('sheet_cache_dse', JSON.stringify(updated));
         return updated;
       });
@@ -1868,6 +2081,9 @@ const pushToSheets = useCallback(async (action: 'update' | 'delete', transaction
       setIsTransactionModalOpen(false);
     }
     await pushToSheets('update', t);
+    if (splitTx) {
+      await pushToSheets('update', splitTx);
+    }
   };
 
   // Save and keep open (Next)
@@ -2063,6 +2279,7 @@ const pushToSheets = useCallback(async (action: 'update' | 'delete', transaction
       else if (sortBy === 'total') cmp = b.total - a.total;
       else if (sortBy === 'ticker') cmp = (a.ticker || '').localeCompare(b.ticker || '');
       else if (sortBy === 'type') cmp = a.type.localeCompare(b.type);
+      else if (sortBy === 'price') cmp = (b.price || 0) - (a.price || 0);
       return sortOrder === 'desc' ? cmp : -cmp;
     });
     return r;
@@ -2348,24 +2565,7 @@ const pushToSheets = useCallback(async (action: 'update' | 'delete', transaction
         ])
     ).values()
   ]}
-        onSave={async (t, keepOpen?: boolean) => {
-          if (editingTransaction) {
-            setTransactions(prev => {
-              const updated = prev.map(tx => tx.id === t.id ? t : tx);
-              localStorage.setItem('sheet_cache_dse', JSON.stringify(updated));
-              return updated;
-            });
-            setIsTransactionModalOpen(false);
-          } else {
-            setTransactions(prev => {
-              const updated = [...prev, t];
-              localStorage.setItem('sheet_cache_dse', JSON.stringify(updated));
-              return updated;
-            });
-            if (!keepOpen) setIsTransactionModalOpen(false);
-          }
-          await pushToSheets('update', t);
-        }}
+        onSave={handleSaveTransaction}
       />
 
       {/* Confirm dialog */}
@@ -2879,7 +3079,7 @@ const fmtShort = (n: number) => {
                   { label: 'Date',       col: 'date'   as const },
                   { label: 'Type',       col: 'type'   as const },
                   { label: 'Stock',      col: 'ticker' as const },
-                  { label: 'Qty & Price', col: null },
+                  { label: 'Qty & Price', col: 'price'  as const },
                   { label: 'Total',      col: 'total'  as const },
                 ].map(({ label, col }) => (
                   <div key={label}
@@ -3926,6 +4126,25 @@ const chartHeight = Math.max(200, stockChartData.length * (BAR_SIZE + BAR_GAP) +
                   const name = nameInput.value.trim();
                   
                   if (ticker && name) {
+                    // Check if exists in transaction history
+                    const existsInHistory = transactions.some(tx => tx.ticker && tx.ticker.toUpperCase() === ticker);
+                    
+                    if (existsInHistory) {
+                      // Update company name in all transactions
+                      const updatedTransactions = transactions.map(tx => {
+                        if (tx.ticker && tx.ticker.toUpperCase() === ticker) {
+                          return { ...tx, companyName: name };
+                        }
+                        return tx;
+                      });
+                      // Save locally
+                      setTransactions(updatedTransactions);
+                      localStorage.setItem('sheet_cache_dse', JSON.stringify(updatedTransactions));
+                      markDirty('dse');
+                      // Push to sheets
+                      pushModuleData('dse', updatedTransactions);
+                    }
+
                     const exists = dseSettings.customStocks.some(s => s.ticker === ticker);
                     let newCustom;
                     if (exists) {
@@ -3936,7 +4155,10 @@ const chartHeight = Math.max(200, stockChartData.length * (BAR_SIZE + BAR_GAP) +
                     saveSettings({ ...dseSettings, customStocks: newCustom });
                     tickerInput.value = '';
                     nameInput.value = '';
-                    setApiStatus({ message: `Stock ${ticker} ${exists ? 'updated' : 'added'} successfully`, isError: false });
+                    setApiStatus({ 
+                      message: `Stock ${ticker} ${existsInHistory ? 'updated in database and transaction history' : (exists ? 'updated' : 'added')} successfully`, 
+                      isError: false 
+                    });
                     setTimeout(() => setApiStatus(null), 3000);
                   }
                 }}
