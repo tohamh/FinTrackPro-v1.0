@@ -378,20 +378,30 @@ const STOCK_LIST = useMemo(() => {
     });
   }, [formData.qty, formData.price, formData.type, commMode, commissionRate]);
 
-const handleNext = async () => {
-    const snapshot = formData as DseTransaction;
-    const keepDate = snapshot.date || getTodayStr();
+  const handleNext = async () => {
+    const snapshot = { ...formData } as DseTransaction;
+    if (!snapshot.id) {
+      snapshot.id = Math.random().toString(36).substr(2, 9);
+    }
+
+    await onSave(snapshot, true);
 
     setFormData({
-      ...blankForm(keepDate),
-      date: keepDate,
-      portfolio: snapshot.portfolio,
+      id: Math.random().toString(36).substr(2, 9),
+      date: snapshot.date || getTodayStr(),
+      type: snapshot.type || 'Buy',
+      portfolio: snapshot.portfolio || 'Investment',
+      ticker: snapshot.ticker || '',
+      companyName: snapshot.companyName || '',
+      qty: 0,
+      price: 0,
+      commission: 0,
+      total: 0,
+      notes: '',
     });
     setSuggestions([]);
     setCommMode('Auto');
     setError('');
-
-    onSave(snapshot, true);
   };
 
   const inputCls =
@@ -2070,15 +2080,14 @@ const pushToSheets = useCallback(async (action: 'update' | 'delete', transaction
         localStorage.setItem('sheet_cache_dse', JSON.stringify(updated));
         return updated;
       });
-      setIsTransactionModalOpen(false);
+      if (!keepOpen) setIsTransactionModalOpen(false);
     } else {
       setTransactions(prev => {
         const updated = [...prev, t];
         localStorage.setItem('sheet_cache_dse', JSON.stringify(updated));
         return updated;
       });
-      // For "Add" (not Next), close is handled by caller; for "Next" modal stays open
-      setIsTransactionModalOpen(false);
+      if (!keepOpen) setIsTransactionModalOpen(false);
     }
     await pushToSheets('update', t);
     if (splitTx) {
